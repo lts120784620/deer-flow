@@ -45,6 +45,29 @@ def handoff_to_planner(
     return
 
 
+@tool
+def handoff_to_image_generator(
+    image_description: Annotated[str, "Detailed description of the image to be generated"],
+    image_type: Annotated[str, "Type of generation: 'text_to_image', 'image_to_image', or 'image_to_video'"] = "text_to_image",
+    style_prompt: Annotated[str, "Additional style or quality parameters for the image"] = "",
+) -> str:
+    """
+    Hand off image/video generation tasks to the image generator agent.
+    
+    Use this tool when the user requests image generation, visualization, or when you need
+    to create visual content to support your research findings.
+    
+    Args:
+        image_description: Detailed description of what image to generate
+        image_type: The type of generation (text_to_image, image_to_image, image_to_video)
+        style_prompt: Additional style parameters (e.g., "high quality", "realistic", etc.)
+    
+    Returns:
+        Instructions to hand off to image generator agent
+    """
+    return f"HANDOFF_TO_IMAGE_GENERATOR: {image_description} | Type: {image_type} | Style: {style_prompt}"
+
+
 def background_investigation_node(state: State, config: RunnableConfig):
     logger.info("background investigation node is running.")
     configurable = Configuration.from_runnable_config(config)
@@ -290,6 +313,26 @@ def reporter_node(state: State, config: RunnableConfig):
 def research_team_node(state: State):
     """Research team node that collaborates on tasks."""
     logger.info("Research team is collaborating on tasks.")
+    
+    # Check if the last step contains image generation handoff
+    current_plan = state.get("current_plan")
+    if current_plan and hasattr(current_plan, 'steps') and current_plan.steps:
+        for step in current_plan.steps:
+            if not step.execution_res:
+                # Check if step description contains image generation handoff
+                if step.execution_res and "HANDOFF_TO_IMAGE_GENERATOR:" in step.execution_res:
+                    logger.info("Detected image generation handoff, routing to image_generator")
+                    return "image_generator"
+                break
+    
+    # Check messages for handoff signals
+    messages = state.get("messages", [])
+    if messages:
+        last_message = messages[-1].content if messages[-1] else ""
+        if "HANDOFF_TO_IMAGE_GENERATOR:" in last_message:
+            logger.info("Detected image generation handoff in messages, routing to image_generator")
+            return "image_generator"
+    
     pass
 
 
@@ -299,6 +342,16 @@ async def _execute_agent_step(
     """Helper function to execute a step using the specified agent."""
     current_plan = state.get("current_plan")
     observations = state.get("observations", [])
+
+    # Check if current_plan is a valid Plan object
+    if not current_plan or isinstance(current_plan, str):
+        logger.warning("No valid plan found or plan is a string")
+        return Command(goto="research_team")
+    
+    # Ensure we have a proper Plan object with steps
+    if not hasattr(current_plan, 'steps') or not current_plan.steps:
+        logger.warning("No steps found in current plan")
+        return Command(goto="research_team")
 
     # Find the first unexecuted step
     current_step = None
@@ -470,7 +523,7 @@ async def researcher_node(
     """Researcher node that do research"""
     logger.info("Researcher node is researching.")
     configurable = Configuration.from_runnable_config(config)
-    tools = [get_web_search_tool(configurable.max_search_results), crawl_tool]
+    tools = [get_web_search_tool(configurable.max_search_results), crawl_tool, handoff_to_image_generator]
     retriever_tool = get_retriever_tool(state.get("resources", []))
     if retriever_tool:
         tools.insert(0, retriever_tool)
@@ -488,9 +541,31 @@ async def coder_node(
 ) -> Command[Literal["research_team"]]:
     """Coder node that do code analysis."""
     logger.info("Coder node is coding.")
+    configurable = Configuration.from_runnable_config(config)
+    tools = [python_repl_tool]
+    retriever_tool = get_retriever_tool(state.get("resources", []))
+    if retriever_tool:
+        tools.insert(0, retriever_tool)
     return await _setup_and_execute_agent_step(
         state,
         config,
         "coder",
-        [python_repl_tool],
+        tools,
+    )
+
+
+async def image_generator_node(
+    state: State, config: RunnableConfig
+) -> Command[Literal["research_team"]]:
+    """Image generator node that generates images and videos using MCP tools."""
+    logger.info("Image generator node is generating visual content.")
+    
+    # Image generator agent only uses MCP tools, no default tools needed
+    default_tools = []
+    
+    return await _setup_and_execute_agent_step(
+        state,
+        config,
+        "image_generator",
+        default_tools,
     )

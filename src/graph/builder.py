@@ -13,6 +13,7 @@ from .nodes import (
     research_team_node,
     researcher_node,
     coder_node,
+    image_generator_node,
     human_feedback_node,
     background_investigation_node,
 )
@@ -20,10 +21,18 @@ from .nodes import (
 
 def continue_to_running_research_team(state: State):
     current_plan = state.get("current_plan")
-    if not current_plan or not current_plan.steps:
+    if not current_plan or isinstance(current_plan, str) or not hasattr(current_plan, 'steps') or not current_plan.steps:
         return "planner"
     if all(step.execution_res for step in current_plan.steps):
         return "planner"
+    
+    # Check for image generation handoff
+    messages = state.get("messages", [])
+    if messages:
+        last_message = messages[-1].content if messages[-1] else ""
+        if "HANDOFF_TO_IMAGE_GENERATOR:" in last_message:
+            return "image_generator"
+    
     for step in current_plan.steps:
         if not step.execution_res:
             break
@@ -45,12 +54,13 @@ def _build_base_graph():
     builder.add_node("research_team", research_team_node)
     builder.add_node("researcher", researcher_node)
     builder.add_node("coder", coder_node)
+    builder.add_node("image_generator", image_generator_node)
     builder.add_node("human_feedback", human_feedback_node)
     builder.add_edge("background_investigator", "planner")
     builder.add_conditional_edges(
         "research_team",
         continue_to_running_research_team,
-        ["planner", "researcher", "coder"],
+        ["planner", "researcher", "coder", "image_generator"],
     )
     builder.add_edge("reporter", END)
     return builder

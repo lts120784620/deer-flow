@@ -42,7 +42,7 @@ export default function RootLayout({
           `}
         </Script>
       </head>
-      <body className="bg-app">
+      <body className="bg-app" suppressHydrationWarning>
         <ThemeProviderWrapper>{children}</ThemeProviderWrapper>
         <Toaster />
         {

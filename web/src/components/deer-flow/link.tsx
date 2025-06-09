@@ -21,10 +21,25 @@ export const Link = ({
 
     (toolCalls || []).forEach((call) => {
       if (call && call.name === "web_search" && call.result) {
-        const result = JSON.parse(call.result) as Array<{ url: string }>;
-        result.forEach((r) => {
-          links.add(r.url);
-        });
+        try {
+          // 检查结果是否以异常信息开头
+          if (typeof call.result === 'string' && call.result.startsWith('Exception(')) {
+            console.warn('Tool call result contains exception:', call.result);
+            return;
+          }
+          
+          const result = JSON.parse(call.result) as Array<{ url: string }>;
+          if (Array.isArray(result)) {
+            result.forEach((r) => {
+              if (r && r.url) {
+                links.add(r.url);
+              }
+            });
+          }
+        } catch (error) {
+          console.warn('Failed to parse tool call result as JSON:', error, 'Result:', call.result);
+          // 继续处理其他工具调用，不抛出错误
+        }
       }
     });
     return links;

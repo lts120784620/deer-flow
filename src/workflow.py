@@ -68,6 +68,16 @@ async def run_agent_workflow_async(
                         "args": ["mcp-github-trending"],
                         "enabled_tools": ["get_github_trending_repositories"],
                         "add_to_agents": ["researcher"],
+                    },
+                    "Wavespeed": {
+                        "transport": "stdio",
+                        "command": "wavespeed-mcp",
+                        "args": [],
+                        "env": {
+                            "WAVESPEED_API_KEY": "e1a55eafd82c53eb1ae658096ed4104e86dcdae7d85c918d02b06092b6ae9208"
+                        },
+                        "enabled_tools": ["text_to_image", "image_to_image", "image_to_video"],
+                        "add_to_agents": ["image_generator"],
                     }
                 }
             },

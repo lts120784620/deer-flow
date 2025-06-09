@@ -1,0 +1,60 @@
+{
+    // Python解释器配置
+    "python.defaultInterpreterPath": "./.venv/bin/python",
+    "python.terminal.activateEnvironment": true,
+    // 代码格式化
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length=88"
+    ],
+    "editor.formatOnSave": true,
+    // Linting配置
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.linting.mypyEnabled": true,
+    // 自动导入
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.autoSearchPaths": true,
+    // 测试配置
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    // 文件关联
+    "files.associations": {
+        "*.py": "python",
+        "*.pyi": "python"
+    },
+    // 排除文件
+    "files.exclude": {
+        "**/.venv": true,
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/node_modules": true,
+        "**/.git": false
+    },
+    // 编辑器配置
+    "editor.rulers": [
+        88
+    ],
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    // 终端配置
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "terminal.integrated.env.osx": {
+        "PYTHONPATH": "${workspaceFolder}"
+    },
+    "terminal.integrated.env.linux": {
+        "PYTHONPATH": "${workspaceFolder}"
+    },
+    "terminal.integrated.env.windows": {
+        "PYTHONPATH": "${workspaceFolder}"
+    },
+    // FastAPI开发配置
+    "rest-client.environmentVariables": {
+        "local": {
+            "baseUrl": "http://localhost:8000"
+        }
+    }
+}
