@@ -163,11 +163,19 @@ interface Step {
   step_type: "research" | "processing"; // Indicates the nature of the step
 }
 
+interface ImageGeneration {
+  type: "text_to_image" | "image_to_image" | "image_to_video";
+  prompt: string;
+  style_prompt?: string;
+}
+
 interface Plan {
   locale: string; // e.g. "en-US" or "zh-CN", based on the user's language or specific request
   has_enough_context: boolean;
   thought: string;
   title: string;
+  request_type?: "research" | "image_generation" | "video_generation";
+  image_generation?: ImageGeneration;
   steps: Step[]; // Research & Processing steps to get more context
 }
 ```
@@ -185,3 +193,9 @@ interface Plan {
   - Processing steps (`need_search: false`) for calculations and data processing
 - Default to gathering more information unless the strictest sufficient context criteria are met
 - Always use the language specified by the locale = **{{ locale }}**.
+- For image/video generation requests:
+  - Set `request_type` to "image_generation" or "video_generation"
+  - Set `image_generation.type` to the appropriate generation type
+  - Set `image_generation.prompt` to the detailed description of what to generate
+  - Optionally set `image_generation.style_prompt` for additional style parameters
+  - Set `has_enough_context` to true as no additional research is needed

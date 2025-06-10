@@ -103,28 +103,12 @@ def background_investigation_node(state: State, config: RunnableConfig):
 
 def planner_node(
     state: State, config: RunnableConfig
-) -> Command[Literal["human_feedback", "reporter"]]:
-    """Planner node that generate the full plan."""
-    logger.info("Planner generating full plan")
+) -> Command[Literal["human_feedback", "reporter", "image_generator"]]:
+    """Planner node that create a plan for the research task."""
+    logger.info("Planner creating a plan.")
     configurable = Configuration.from_runnable_config(config)
+    messages = apply_prompt_template("planner", state)
     plan_iterations = state["plan_iterations"] if state.get("plan_iterations", 0) else 0
-    messages = apply_prompt_template("planner", state, configurable)
-
-    if (
-        plan_iterations == 0
-        and state.get("enable_background_investigation")
-        and state.get("background_investigation_results")
-    ):
-        messages += [
-            {
-                "role": "user",
-                "content": (
-                    "background investigation results of user query:\n"
-                    + state["background_investigation_results"]
-                    + "\n"
-                ),
-            }
-        ]
 
     if AGENT_LLM_MAP["planner"] == "basic":
         llm = get_llm_by_type(AGENT_LLM_MAP["planner"]).with_structured_output(
@@ -148,32 +132,60 @@ def planner_node(
             full_response += chunk.content
     logger.debug(f"Current state messages: {state['messages']}")
     logger.info(f"Planner response: {full_response}")
-
+    
     try:
         curr_plan = json.loads(repair_json_output(full_response))
+        
+        # 检查是否是图片/视频生成请求
+        if curr_plan.get("request_type") in ["image_generation", "video_generation"]:
+            logger.info(f"检测到{curr_plan['request_type']}请求")
+            logger.info(f"生成类型: {curr_plan['image_generation']['type']}")
+            logger.info(f"提示词: {curr_plan['image_generation']['prompt']}")
+            
+            # 确保所有必需字段都存在
+            if not all(key in curr_plan for key in ["locale", "thought", "title"]):
+                curr_plan["locale"] = state.get("locale", "zh-CN")
+                curr_plan["thought"] = f"生成{curr_plan['image_generation']['type']}类型的图片/视频"
+                curr_plan["title"] = f"图片/视频生成任务 - {curr_plan['image_generation']['type']}"
+            
+            # 验证 Plan 模型
+            new_plan = Plan.model_validate(curr_plan)
+            
+            # 调用 image_generator
+            return Command(
+                update={
+                    "messages": [AIMessage(content=full_response, name="planner")],
+                    "current_plan": new_plan,
+                },
+                goto="image_generator",
+            )
+            
+        # 处理研究请求
+        if curr_plan.get("has_enough_context"):
+            logger.info("Planner response has enough context.")
+            new_plan = Plan.model_validate(curr_plan)
+            return Command(
+                update={
+                    "messages": [AIMessage(content=full_response, name="planner")],
+                    "current_plan": new_plan,
+                },
+                goto="reporter",
+            )
+            
+        return Command(
+            update={
+                "messages": [AIMessage(content=full_response, name="planner")],
+                "current_plan": full_response,
+            },
+            goto="human_feedback",
+        )
+            
     except json.JSONDecodeError:
         logger.warning("Planner response is not a valid JSON")
         if plan_iterations > 0:
             return Command(goto="reporter")
         else:
             return Command(goto="__end__")
-    if curr_plan.get("has_enough_context"):
-        logger.info("Planner response has enough context.")
-        new_plan = Plan.model_validate(curr_plan)
-        return Command(
-            update={
-                "messages": [AIMessage(content=full_response, name="planner")],
-                "current_plan": new_plan,
-            },
-            goto="reporter",
-        )
-    return Command(
-        update={
-            "messages": [AIMessage(content=full_response, name="planner")],
-            "current_plan": full_response,
-        },
-        goto="human_feedback",
-    )
 
 
 def human_feedback_node(
@@ -523,11 +535,28 @@ async def researcher_node(
     """Researcher node that do research"""
     logger.info("Researcher node is researching.")
     configurable = Configuration.from_runnable_config(config)
-    tools = [get_web_search_tool(configurable.max_search_results), crawl_tool, handoff_to_image_generator]
+    
+    # Get the last message
+    messages = state.get("messages", [])
+    if not messages:
+        return Command(goto="research_team")
+    
+    last_message = messages[-1].content if messages[-1] else ""
+    logger.info(f"Researcher received message: {last_message}")
+    
+    # Create researcher agent with all necessary tools
+    tools = [
+        get_web_search_tool(configurable.max_search_results),
+        crawl_tool,
+        handoff_to_image_generator,  # Add image generation tool
+    ]
     retriever_tool = get_retriever_tool(state.get("resources", []))
     if retriever_tool:
         tools.insert(0, retriever_tool)
+    
     logger.info(f"Researcher tools: {tools}")
+    
+    # Use the standard agent execution pattern
     return await _setup_and_execute_agent_step(
         state,
         config,
@@ -554,18 +583,116 @@ async def coder_node(
     )
 
 
-async def image_generator_node(
-    state: State, config: RunnableConfig
-) -> Command[Literal["research_team"]]:
-    """Image generator node that generates images and videos using MCP tools."""
-    logger.info("Image generator node is generating visual content.")
+async def image_generator_node(state: State, config: RunnableConfig) -> Command[Literal["reporter"]]:
+    """处理图片/视频生成请求的节点"""
+    logger.info("[image_generator_node] 进入 image_generator_node")
     
-    # Image generator agent only uses MCP tools, no default tools needed
-    default_tools = []
+    # 获取当前计划
+    current_plan = state.get("current_plan")
+    logger.info(f"[image_generator_node] current_plan: {current_plan}")
+    if not current_plan or not current_plan.image_generation:
+        logger.error("[image_generator_node] 没有找到图片生成参数")
+        return Command(goto="reporter")
     
-    return await _setup_and_execute_agent_step(
-        state,
-        config,
-        "image_generator",
-        default_tools,
+    # 获取生成参数
+    image_gen = current_plan.image_generation
+    logger.info(f"生成类型: {image_gen.type}")
+    logger.info(f"提示词: {image_gen.prompt}")
+    
+    # 创建 agent
+    agent = create_agent(
+        agent_name="image_generator",
+        agent_type="image_generator",
+        tools=[],  # 工具会在运行时动态加载
+        prompt_template="image_generator"
     )
+    
+    config = {
+        "configurable": {
+            "thread_id": "default",
+            "max_plan_iterations": 10,
+            "max_step_num": 10,
+            "mcp_settings": {
+                "servers": {
+                    "mcp-github-trending": {
+                        "transport": "stdio",
+                        "command": "uvx",
+                        "args": ["mcp-github-trending"],
+                        "enabled_tools": ["get_github_trending_repositories"],
+                        "add_to_agents": ["researcher"],
+                    },
+                    "Wavespeed": {
+                        "transport": "stdio",
+                        "command": "wavespeed-mcp",
+                        "args": [],
+                        "env": {
+                            "WAVESPEED_API_KEY": "e1a55eafd82c53eb1ae658096ed4104e86dcdae7d85c918d02b06092b6ae9208"
+                        },
+                        "enabled_tools": ["text_to_image", "image_to_image", "image_to_video"],
+                        "add_to_agents": ["image_generator"],
+                    }
+                }
+            },
+        },
+        "recursion_limit": 100,
+    }
+    
+    # 执行 agent 步骤
+    try:
+        logger.info("[image_generator_node] 调用 _setup_and_execute_agent_step 开始")
+        result = await _setup_and_execute_agent_step(
+            state=state,
+            config=config,
+            agent_type="image_generator",
+            default_tools=[]
+        )
+        logger.info(f"[image_generator_node] _setup_and_execute_agent_step 返回: {result}")
+        
+        # 构建生成结果消息
+        generation_result = f"""
+## 图片生成结果
+
+### 生成参数
+- 类型: {image_gen.type}
+- 提示词: {image_gen.prompt}
+
+### 生成结果
+{result}
+"""
+        
+        # 更新状态并返回
+        return Command(
+            update={
+                "messages": [
+                    AIMessage(content=generation_result, name="image_generator"),
+                    AIMessage(content="图片生成完成，请查看结果。", name="reporter")
+                ],
+                "current_plan": current_plan,
+                "observations": state.get("observations", []) + [generation_result]
+            },
+            goto="reporter"
+        )
+        
+    except Exception as e:
+        logger.error(f"[image_generator_node] 图片生成失败: {str(e)}", exc_info=True)
+        error_message = f"""
+## 图片生成失败
+
+### 错误信息
+{str(e)}
+
+### 生成参数
+- 类型: {image_gen.type}
+- 提示词: {image_gen.prompt}
+"""
+        return Command(
+            update={
+                "messages": [
+                    AIMessage(content=error_message, name="image_generator"),
+                    AIMessage(content="图片生成失败，请查看错误信息。", name="reporter")
+                ],
+                "current_plan": current_plan,
+                "observations": state.get("observations", []) + [error_message]
+            },
+            goto="reporter"
+        )

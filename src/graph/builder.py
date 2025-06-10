@@ -18,6 +18,10 @@ from .nodes import (
     background_investigation_node,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def continue_to_running_research_team(state: State):
     current_plan = state.get("current_plan")
@@ -27,19 +31,19 @@ def continue_to_running_research_team(state: State):
         return "planner"
     
     # Check for image generation handoff
-    messages = state.get("messages", [])
-    if messages:
-        last_message = messages[-1].content if messages[-1] else ""
-        if "HANDOFF_TO_IMAGE_GENERATOR:" in last_message:
-            return "image_generator"
-    
     for step in current_plan.steps:
         if not step.execution_res:
             break
     if step.step_type and step.step_type == StepType.RESEARCH:
+        logger.info("Returning to researcher node")
         return "researcher"
     if step.step_type and step.step_type == StepType.PROCESSING:
+        logger.info("Returning to coder node")
         return "coder"
+    if step.step_type and step.step_type == StepType.IMAGE_GENERATION:
+        logger.info("Returning to image_generator node")
+        return "image_generator"
+    logger.info("Returning to planner node")
     return "planner"
 
 
